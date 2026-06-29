@@ -4,7 +4,8 @@ import { wordList } from './words.js';
 let currentLang = 'es';
 let score = parseInt(localStorage.getItem('hangman_score')) || 0;
 let streak = parseInt(localStorage.getItem('hangman_streak')) || 0;
-let lives = 6;
+let gameLives = 3; // Game lives (total 3)
+let attempts = 6;  // Remaining attempts for the current word (starts at 6)
 let hintUsed = false;
 let soundEnabled = localStorage.getItem('hangman_sound') !== 'false';
 
@@ -14,15 +15,20 @@ let secretWordHint = '';
 let secretWordCategory = '';
 let guessedLetters = new Set();
 let isGameOver = false;
+let redirectTimeout = null;
 
-// Translations Dictionary
+// Translations Dictionary for all views
 const translations = {
   es: {
     score: "Puntos",
     streak: "Racha",
-    hintCost: "Ver pista (Cuesta 5 puntos)",
+    hintCost: "Ver pista (Cuesta 5 ptos)",
     hintFree: "Pista",
-    lives: "Intentos",
+    lives: "Vidas",
+    attempts: "Intentos",
+    lostLifeTitle: "¡Vida perdida!",
+    lostLifeMsg: "No has adivinado la palabra. Pierdes 1 vida.",
+    nextWordBtn: "Siguiente Palabra",
     keyboardTip: "Puedes usar el teclado físico de tu computadora.",
     newWord: "Nueva Palabra",
     victory: "¡Victoria!",
@@ -31,11 +37,26 @@ const translations = {
     pointsGained: "Puntos obtenidos",
     currentStreak: "Racha actual",
     playAgain: "Jugar de nuevo",
-    gameOver: "Fin del Juego",
-    loseMsg: "Te has quedado sin intentos. ¡Inténtalo de nuevo!",
+    gameOver: "Juego Perdido",
+    loseMsg: "Te has quedado sin vidas. Redirigiendo al menú...",
     pointsLost: "Puntos perdidos",
     category: "Categoría",
-    noPoints: "Necesitas al menos 5 puntos para una pista"
+    noPoints: "Necesitas al menos 5 puntos para una pista",
+    menuTitle: "MODERN HANGMAN",
+    menuSubtitle: "Menú Principal",
+    playBtn: "Jugar",
+    creditsBtn: "Créditos",
+    exitBtn: "Salir",
+    creditsTitle: "Créditos",
+    creditsDev: "Desarrollado por",
+    creditsTech: "Tecnología",
+    creditsDesign: "Diseño",
+    creditsBack: "Volver al Menú",
+    exitTitle: "¡Gracias por jugar!",
+    exitSubtitle: "Esperamos que hayas disfrutado del desafío.",
+    exitRestart: "Jugar de Nuevo",
+    logoText: "AHORCADO",
+    modalBackBtn: "Volver al Menú"
   },
   en: {
     score: "Score",
@@ -43,6 +64,10 @@ const translations = {
     hintCost: "Show Hint (Costs 5 pts)",
     hintFree: "Hint",
     lives: "Lives",
+    attempts: "Attempts",
+    lostLifeTitle: "Life Lost!",
+    lostLifeMsg: "You didn't guess the word. You lose 1 life.",
+    nextWordBtn: "Next Word",
     keyboardTip: "You can use your computer's physical keyboard.",
     newWord: "New Word",
     victory: "Victory!",
@@ -52,10 +77,25 @@ const translations = {
     currentStreak: "Current streak",
     playAgain: "Play again",
     gameOver: "Game Over",
-    loseMsg: "You ran out of lives. Better luck next time!",
+    loseMsg: "You ran out of lives. Redirecting to menu...",
     pointsLost: "Points lost",
     category: "Category",
-    noPoints: "You need at least 5 points for a hint"
+    noPoints: "You need at least 5 points for a hint",
+    menuTitle: "MODERN HANGMAN",
+    menuSubtitle: "Main Menu",
+    playBtn: "Play",
+    creditsBtn: "Credits",
+    exitBtn: "Exit",
+    creditsTitle: "Credits",
+    creditsDev: "Developed by",
+    creditsTech: "Technology",
+    creditsDesign: "Design",
+    creditsBack: "Back to Menu",
+    exitTitle: "Thanks for playing!",
+    exitSubtitle: "We hope you enjoyed the challenge.",
+    exitRestart: "Play Again",
+    logoText: "HANGMAN",
+    modalBackBtn: "Back to Menu"
   }
 };
 
@@ -221,6 +261,26 @@ function animateConfetti() {
   }
 }
 
+// --- SCREEN TRANSITIONS MANAGER ---
+function showScreen(screenId) {
+  const screens = ['welcome', 'menu', 'credits', 'exit', 'game'];
+  screens.forEach(id => {
+    const el = document.getElementById(`${id}-screen`);
+    if (el) {
+      el.classList.remove('active-screen');
+      el.classList.add('hidden-screen');
+    }
+  });
+  
+  const targetEl = document.getElementById(`${screenId}-screen`);
+  if (targetEl) {
+    targetEl.classList.remove('hidden-screen');
+    // Force browser reflow to trigger CSS scale transition
+    void targetEl.offsetWidth;
+    targetEl.classList.add('active-screen');
+  }
+}
+
 // --- GAME LOGIC ---
 
 // Character normalization utility
@@ -249,7 +309,7 @@ function selectNewWord() {
   normalizedWord = secretWord.split('').map(normalizeChar);
   
   guessedLetters.clear();
-  lives = 6;
+  attempts = 6; // Reset attempts to 6 for the current word
   hintUsed = false;
   isGameOver = false;
   
@@ -314,20 +374,35 @@ function updateCategoryDisplay() {
   document.getElementById('category-tag').textContent = translations[currentLang].category;
 }
 
-// Lives display updates
+// Lives and Attempts display updates
 function updateLivesDisplay() {
-  const livesValEl = document.getElementById('lives-val');
-  livesValEl.textContent = lives;
+  // Update Attempts display
+  const attemptsDisplay = document.getElementById('attempts-display');
+  if (attemptsDisplay) {
+    const label = translations[currentLang].attempts;
+    attemptsDisplay.innerHTML = `${label}: <span id="attempts-val" class="${attempts <= 2 ? 'low' : ''}">${attempts}</span>/6`;
+  }
   
+  // Update Game Lives display
   const livesDisplay = document.getElementById('lives-display');
-  const label = translations[currentLang].lives;
-  livesDisplay.innerHTML = `${label}: <span id="lives-val">${lives}</span>/6`;
-  
-  const newLivesValEl = document.getElementById('lives-val');
-  if (lives <= 2) {
-    newLivesValEl.classList.add('low');
-  } else {
-    newLivesValEl.classList.remove('low');
+  if (livesDisplay) {
+    const label = translations[currentLang].lives;
+    livesDisplay.innerHTML = `${label}: <span id="lives-hearts-container"></span>`;
+    
+    const heartsContainer = livesDisplay.querySelector('#lives-hearts-container');
+    if (heartsContainer) {
+      for (let i = 1; i <= 3; i++) {
+        const heartSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        heartSvg.setAttribute('class', `heart-icon ${i > gameLives ? 'lost' : ''}`);
+        heartSvg.setAttribute('viewBox', '0 0 24 24');
+        
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z');
+        
+        heartSvg.appendChild(path);
+        heartsContainer.appendChild(heartSvg);
+      }
+    }
   }
 }
 
@@ -414,7 +489,7 @@ function handleGuess(letter) {
     playSound('incorrect');
     if (virtualKey) virtualKey.classList.add('incorrect');
     
-    lives--;
+    attempts--;
     revealHangmanPart();
     updateLivesDisplay();
     checkGameLose();
@@ -422,24 +497,21 @@ function handleGuess(letter) {
 }
 
 // Reveal next part of the Hangman SVG
+// 6 attempts version:
 function revealHangmanPart() {
-  const parts = [
-    'hang-head',
-    'hang-body',
-    'hang-l-arm',
-    'hang-r-arm',
-    'hang-l-leg',
-    'hang-r-leg'
-  ];
-  
-  // lives remaining: 6 is full. First mistake: 5 lives. Part index to show is 6 - lives - 1
-  const mistakeIndex = 6 - lives - 1;
-  if (mistakeIndex >= 0 && mistakeIndex < parts.length) {
-    const partId = parts[mistakeIndex];
-    const part = document.getElementById(partId);
-    if (part) {
-      part.classList.add('visible');
-    }
+  if (attempts === 5) {
+    document.getElementById('hang-head')?.classList.add('visible');
+  } else if (attempts === 4) {
+    document.getElementById('hang-body')?.classList.add('visible');
+  } else if (attempts === 3) {
+    document.getElementById('hang-l-arm')?.classList.add('visible');
+  } else if (attempts === 2) {
+    document.getElementById('hang-r-arm')?.classList.add('visible');
+  } else if (attempts === 1) {
+    document.getElementById('hang-l-leg')?.classList.add('visible');
+  } else if (attempts === 0) {
+    document.getElementById('hang-r-leg')?.classList.add('visible');
+    document.getElementById('hang-face')?.classList.add('visible');
   }
 }
 
@@ -466,8 +538,11 @@ function checkGameWin() {
 
 // Check lose state
 function checkGameLose() {
-  if (lives <= 0) {
+  if (attempts <= 0) {
     isGameOver = true;
+    
+    // Deduct game life
+    gameLives--;
     
     // Deduct points on loss (min 0)
     const pointsLost = Math.min(score, 5);
@@ -475,10 +550,18 @@ function checkGameLose() {
     streak = 0;
     
     updateStats();
-    playSound('lose');
     
-    // Reveal sad face
-    document.getElementById('hang-face').classList.add('visible');
+    // Play appropriate sound
+    if (gameLives <= 0) {
+      playSound('lose');
+    } else {
+      playSound('incorrect');
+    }
+    
+    // Reveal sad face and rest of the body just in case
+    document.getElementById('hang-face')?.classList.add('visible');
+    const parts = document.querySelectorAll('.hang-part');
+    parts.forEach(part => part.classList.add('visible'));
     
     // Reveal all letters on screen
     secretWord.split('').forEach(char => {
@@ -486,15 +569,27 @@ function checkGameLose() {
     });
     updateWordDisplay();
     
+    // Update attempts & lives display
+    updateLivesDisplay();
+    
     // Show modal delayed slightly so player sees the face/reveal
     setTimeout(() => {
-      showModal(false, -pointsLost);
+      const isGameOverState = gameLives <= 0;
+      showModal(false, -pointsLost, isGameOverState);
+      
+      if (isGameOverState) {
+        // Auto-redirect to menu screen after 3 seconds as required
+        redirectTimeout = setTimeout(() => {
+          closeModal();
+          showScreen('menu');
+        }, 3000);
+      }
     }, 1000);
   }
 }
 
 // Show End Game Modal overlay
-function showModal(isWin, pointsChange) {
+function showModal(isWin, pointsChange, isGameOverState = false) {
   const modal = document.getElementById('modal');
   const title = document.getElementById('modal-title');
   const message = document.getElementById('modal-message');
@@ -513,22 +608,36 @@ function showModal(isWin, pointsChange) {
     decor.className = 'modal-decor-win';
     pointsVal.textContent = `+${pointsChange}`;
     pointsVal.style.color = 'var(--color-success)';
+    playText.textContent = translations[currentLang].playAgain;
   } else {
-    title.textContent = translations[currentLang].gameOver;
-    message.textContent = translations[currentLang].loseMsg;
     decor.className = 'modal-decor-lose';
     pointsVal.textContent = `${pointsChange}`;
     pointsVal.style.color = 'var(--color-danger)';
+    
+    if (isGameOverState) {
+      title.textContent = translations[currentLang].gameOver;
+      message.textContent = translations[currentLang].loseMsg;
+      playText.textContent = translations[currentLang].modalBackBtn;
+    } else {
+      title.textContent = translations[currentLang].lostLifeTitle;
+      message.textContent = translations[currentLang].lostLifeMsg;
+      playText.textContent = translations[currentLang].nextWordBtn;
+    }
   }
   
-  playText.textContent = translations[currentLang].playAgain;
   modal.classList.remove('hidden');
 }
 
 // Close Modal
 function closeModal() {
   const modal = document.getElementById('modal');
-  modal.classList.add('hidden');
+  if (modal) modal.classList.add('hidden');
+  
+  // Clear redirect timer if player interacted
+  if (redirectTimeout) {
+    clearTimeout(redirectTimeout);
+    redirectTimeout = null;
+  }
 }
 
 // Hint execution
@@ -555,7 +664,7 @@ function triggerHint() {
   }
 }
 
-// Toggle language
+// Toggle language (from game header shortcut)
 function toggleLanguage() {
   currentLang = currentLang === 'es' ? 'en' : 'es';
   document.getElementById('lang-val').textContent = currentLang.toUpperCase();
@@ -575,7 +684,7 @@ function toggleLanguage() {
 function translateUI() {
   const t = translations[currentLang];
   
-  // Logo Dot could update or remain the same
+  // Game Screen elements
   document.getElementById('sound-btn').title = currentLang === 'es' ? "Activar/Desactivar sonido" : "Toggle sound";
   document.getElementById('reset-btn-text').textContent = t.newWord;
   document.getElementById('tip-text').textContent = t.keyboardTip;
@@ -585,6 +694,27 @@ function translateUI() {
   scoreBadge.querySelector('.stat-label').textContent = t.score;
   const streakBadge = document.getElementById('streak-badge');
   streakBadge.querySelector('.stat-label').textContent = t.streak;
+  
+  document.getElementById('logo-text').innerHTML = `${t.logoText}<span class="logo-dot">.</span>`;
+  
+  // Menu Screen elements
+  document.getElementById('menu-title-text').innerHTML = `${t.menuTitle}<span class="logo-dot">.</span>`;
+  document.getElementById('menu-subtitle-text').textContent = t.menuSubtitle;
+  document.getElementById('menu-play-text').textContent = t.playBtn;
+  document.getElementById('menu-credits-text').textContent = t.creditsBtn;
+  document.getElementById('menu-exit-text').textContent = t.exitBtn;
+  
+  // Credits Screen elements
+  document.getElementById('credits-title-text').textContent = t.creditsTitle;
+  document.getElementById('credits-dev-label').textContent = t.creditsDev;
+  document.getElementById('credits-tech-label').textContent = t.creditsTech;
+  document.getElementById('credits-design-label').textContent = t.creditsDesign;
+  document.getElementById('credits-back-text').textContent = t.creditsBack;
+  
+  // Exit Screen elements
+  document.getElementById('exit-title-text').textContent = t.exitTitle;
+  document.getElementById('exit-subtitle-text').textContent = t.exitSubtitle;
+  document.getElementById('exit-restart-text').textContent = t.exitRestart;
   
   updateLivesDisplay();
 }
@@ -613,6 +743,10 @@ function toggleSound() {
 document.addEventListener('keydown', (e) => {
   if (isGameOver) return;
   
+  // Ignore inputs if the user is not actively on the game screen
+  const gameScreen = document.getElementById('game-screen');
+  if (!gameScreen || !gameScreen.classList.contains('active-screen')) return;
+  
   // Ignore inputs with Ctrl/Alt/Meta held down
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   
@@ -629,9 +763,75 @@ document.getElementById('reset-btn').addEventListener('click', selectNewWord);
 document.getElementById('hint-btn').addEventListener('click', triggerHint);
 document.getElementById('lang-btn').addEventListener('click', toggleLanguage);
 document.getElementById('sound-btn').addEventListener('click', toggleSound);
+
+// Handle modal click
 document.getElementById('modal-play-btn').addEventListener('click', () => {
+  if (redirectTimeout) {
+    clearTimeout(redirectTimeout);
+    redirectTimeout = null;
+  }
   closeModal();
+  if (gameLives <= 0) {
+    showScreen('menu');
+  } else {
+    selectNewWord();
+  }
+});
+
+// Welcome Screen language selectors
+document.getElementById('lang-es-btn').addEventListener('click', () => {
+  currentLang = 'es';
+  localStorage.setItem('hangman_lang', 'es');
+  document.getElementById('lang-val').textContent = 'ES';
+  document.documentElement.lang = 'es';
+  translateUI();
+  playSound('correct');
+  showScreen('menu');
+});
+
+document.getElementById('lang-en-btn').addEventListener('click', () => {
+  currentLang = 'en';
+  localStorage.setItem('hangman_lang', 'en');
+  document.getElementById('lang-val').textContent = 'EN';
+  document.documentElement.lang = 'en';
+  translateUI();
+  playSound('correct');
+  showScreen('menu');
+});
+
+// Main Menu buttons
+document.getElementById('menu-play-btn').addEventListener('click', () => {
+  playSound('correct');
+  gameLives = 3; // Reset game lives for a new game
   selectNewWord();
+  showScreen('game');
+});
+
+document.getElementById('menu-credits-btn').addEventListener('click', () => {
+  playSound('correct');
+  showScreen('credits');
+});
+
+document.getElementById('menu-exit-btn').addEventListener('click', () => {
+  playSound('correct');
+  showScreen('exit');
+});
+
+// Credits & Exit Screen actions
+document.getElementById('credits-back-btn').addEventListener('click', () => {
+  playSound('correct');
+  showScreen('menu');
+});
+
+document.getElementById('exit-restart-btn').addEventListener('click', () => {
+  playSound('correct');
+  showScreen('welcome');
+});
+
+// Header navigation shortcut
+document.getElementById('home-btn').addEventListener('click', () => {
+  playSound('correct');
+  showScreen('menu');
 });
 
 // --- INITIALIZATION ---
@@ -650,6 +850,7 @@ function init() {
   
   translateUI();
   selectNewWord();
+  showScreen('welcome'); // Open with language selector
 }
 
 // Start game
